@@ -1155,6 +1155,10 @@ fstream
 -
 stdlib.h
 -
+vector
+-
+math.h
+-
 
 /opt/homebrew/Cellar/glew/2.2.0_1/include/GL/glew.h
 cstddef
