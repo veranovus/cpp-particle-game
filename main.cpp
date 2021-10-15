@@ -18,6 +18,11 @@
 #include <stdlib.h>
 #include <vector>
 #include <math.h>
+#include <array>
+
+
+#define CURRENT_PARTICLE particles[y * MAX_P_WIDTH + x]
+#define HOST_PARTICLE    particles[p->y * MAX_P_WIDTH + p->x]
 
 
 struct Vertex {
@@ -33,11 +38,16 @@ enum class ParticleType {
 
 struct Particle {
 
-    glm::vec2 pos;
+    int x, y;
     glm::vec4 color;
+    ParticleType type = ParticleType::NONE;
+    int idleCounter = 0;
+    int stablePoint = 0;
     bool idle = false;
+    bool updated = false;
 
-    Particle(glm::vec2 pos, glm::vec4 color) : pos(pos), color(color) {}
+    Particle(int x, int y, glm::vec4 color, ParticleType type) : x(x), y(y), color(color), type(type) {}
+    Particle() : x(0), y(0), color({0, 0, 0, 0}), idle(true) {}
 };
 
 struct RendererData {
@@ -57,30 +67,8 @@ struct RendererData {
     uint32_t quadCount = 0;
 };
 
+
 static RendererData rd = RendererData();
-
-bool setUniformMat4f(GLuint shader, const std::string& name, glm::mat4 matrix);
-bool setUniform4f(GLuint shader, const std::string& name, glm::vec4 floats);
-
-std::string parseShader(const std::string& shaderSource);
-GLuint compileShader(unsigned int type, const std::string& source);
-GLuint createShaderProgram(const std::string& vertexShaderSource, const std::string& fragmentShaderSource);
-
-void drawQuad(glm::vec2 pos, glm::vec2 size, glm::vec4 color);
-
-void placeParticle(char* space, std::vector<Particle>& particles, int x, int y, ParticleType type);
-
-void calculateFPS();
-void calculateDeltaTime();
-glm::vec2 getMousePos(GLFWwindow* window);
-
-void initRenderer();
-void resetBatchStats();
-void beginBatch();
-void endBatch();
-void renderBatch();
-void terminateRenderer();
-
 
 static constexpr int SCREEN_WIDTH  = 960;
 static constexpr int SCREEN_HEIGHT = 680;
@@ -94,6 +82,31 @@ static constexpr double deltaTimeHigh = 0.1;
 static double lastFrameTime = 0.0;
 static double crntFrameTime;
 static double deltaTime;
+
+
+bool setUniformMat4f(GLuint shader, const std::string& name, glm::mat4 matrix);
+bool setUniform4f(GLuint shader, const std::string& name, glm::vec4 floats);
+
+std::string parseShader(const std::string& shaderSource);
+GLuint compileShader(unsigned int type, const std::string& source);
+GLuint createShaderProgram(const std::string& vertexShaderSource, const std::string& fragmentShaderSource);
+
+void drawQuad(glm::vec2 pos, glm::vec2 size, glm::vec4 color);
+
+void placeParticle(std::array<Particle*, (SCREEN_WIDTH / 5) * (SCREEN_HEIGHT / 5)>& particles, int x, int y, ParticleType type);
+void swapParticles(void** p1, void** p2);
+void updateParticles(std::array<Particle*, (SCREEN_WIDTH / 5) * (SCREEN_HEIGHT / 5)>& particles);
+
+void calculateFPS();
+void calculateDeltaTime();
+glm::vec2 getMousePos(GLFWwindow* window);
+
+void initRenderer();
+void resetBatchStats();
+void beginBatch();
+void endBatch();
+void renderBatch();
+void terminateRenderer();
 
 
 int main() {
@@ -127,6 +140,10 @@ int main() {
         return -1;
     }
 
+    // Enable Blending
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
     // Initialize ImGUI
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -140,7 +157,7 @@ int main() {
                                         "../res/shader/particle/fragment.shader");
 
     // Model View Projection Matrix
-    glm::mat4 proj = glm::ortho(0.0f, (float)SCREEN_WIDTH, 0.0f, (float)SCREEN_HEIGHT, -1.0f, 1.0f);
+    glm::mat4 proj = glm::ortho(0.0f, (float)SCREEN_WIDTH, (float)SCREEN_HEIGHT, 0.0f, -1.0f, 1.0f);
     glm::mat4 mvp = proj;
 
     // Player position
@@ -159,14 +176,9 @@ int main() {
 
     // Particles
     //std::vector<Particle> particles;
-    std::vector<Particle> particles;
-    auto* space = new char[(SCREEN_WIDTH / 5) * (SCREEN_HEIGHT / 5)];
-    for (int x = 0; x < SCREEN_WIDTH / 5; ++x) {
-        for (int y = 0; y < SCREEN_HEIGHT / 5; ++y) {
-
-            space[y * (SCREEN_WIDTH / 5) + x] = -1;
-        }
-    }
+    std::array<Particle*, (SCREEN_WIDTH / 5) * (SCREEN_HEIGHT / 5)> particles{};
+    for (auto* p : particles)
+        p = nullptr;
 
     while (!glfwWindowShouldClose(window)) {
 
@@ -179,6 +191,12 @@ int main() {
             frameTime = std::to_string((timeDiff / fpsCounter) * 1000);
             prevTime = crntTime;
             fpsCounter = 0;
+
+            for (auto* p : particles)
+                if (p) p->updated = false;
+
+            // Update Particles
+            updateParticles(particles);
         }
         // Calculate delta time;
         calculateDeltaTime();
@@ -188,14 +206,14 @@ int main() {
         if (glfwGetKey(window, GLFW_KEY_D))
             ppos.x += (float)(100.0 * deltaTime);
         if (glfwGetKey(window, GLFW_KEY_W))
-            ppos.y += (float)(100.0 * deltaTime);
-        if (glfwGetKey(window, GLFW_KEY_S))
             ppos.y -= (float)(100.0 * deltaTime);
+        if (glfwGetKey(window, GLFW_KEY_S))
+            ppos.y += (float)(100.0 * deltaTime);
 
         if (glfwGetMouseButton(window, 0)) {
 
             auto pos = getMousePos(window);
-            placeParticle(space, particles, (int)pos.x, (int)pos.y, ParticleType::SAND);
+            placeParticle(particles, (int)pos.x, (int)pos.y, ParticleType::SAND);
         }
 
         // Render Loop
@@ -212,8 +230,15 @@ int main() {
         glUseProgram(shader);
         setUniformMat4f(shader, "u_mvp", mvp);
 
-        for (auto& p : particles)
-            drawQuad({p.pos.x, p.pos.y}, {PIXEL_SIZE, PIXEL_SIZE}, {p.color.r, p.color.g, p.color.b, p.color.a});
+        // Render all the particles
+        for (int x = 0; x < SCREEN_WIDTH / PIXEL_SIZE; ++x) {
+            for (int y = 0; y < SCREEN_HEIGHT / PIXEL_SIZE; ++y) {
+
+                Particle* p = particles[y * (SCREEN_WIDTH / 5) + x];
+                if (p != nullptr)
+                    drawQuad({p->x * PIXEL_SIZE, p->y * PIXEL_SIZE}, {PIXEL_SIZE, PIXEL_SIZE}, p->color);
+            }
+        }
 
         drawQuad({ppos.x, ppos.y}, {PIXEL_SIZE, PIXEL_SIZE}, {0.0f, 1.0f, 0.0f, 1.0f});
         drawQuad({300.0f, 300.0f}, {PIXEL_SIZE, PIXEL_SIZE}, {1.0f, 0.0f, 0.0f, 1.0f});
@@ -241,6 +266,9 @@ int main() {
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
+
+    for (auto* part : particles)
+        delete part;
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
@@ -369,15 +397,90 @@ void drawQuad(glm::vec2 pos, glm::vec2 size, glm::vec4 color) {
     rd.quadCount++;
 }
 
-void placeParticle(char* space, std::vector<Particle>& particles, int x, int y, ParticleType type) {
+void placeParticle(std::array<Particle*, (SCREEN_WIDTH / 5) * (SCREEN_HEIGHT / 5)>& particles, int x, int y, ParticleType type) {
 
     x = floor(x / PIXEL_SIZE);
     y = floor(y / PIXEL_SIZE);
 
-    if (space[y * (SCREEN_WIDTH / PIXEL_SIZE) + x] != (int)ParticleType::NONE) return;
+    if ((x < 0 || x >= SCREEN_WIDTH / PIXEL_SIZE) || (y < 0 || y >= SCREEN_HEIGHT / PIXEL_SIZE))
+        return;
+    if (particles[y * (SCREEN_WIDTH / PIXEL_SIZE) + x])
+        return;
 
-    particles.push_back(Particle({x * PIXEL_SIZE, y * PIXEL_SIZE}, {0.5f, 0.5f, 0.0f, 1.0f}));
-    space[y * (SCREEN_WIDTH / 5) + x] = (char)type;
+    if (type == ParticleType::SAND) {
+        particles[y * (SCREEN_WIDTH / PIXEL_SIZE) + x] = new Particle(x, y, {0.5f, 0.5f, 0.0f, 1.0f}, type);
+        particles[y * (SCREEN_WIDTH / PIXEL_SIZE) + x]->stablePoint = 5;
+    }
+}
+
+void updateParticles(std::array<Particle*, (SCREEN_WIDTH / 5) * (SCREEN_HEIGHT / 5)>& particles) {
+
+    const int MAX_P_WIDTH  = SCREEN_WIDTH / 5;
+    const int MAX_P_HEIGHT = SCREEN_HEIGHT / 5;
+
+    for (int y = 0; y < MAX_P_HEIGHT; ++y) {
+
+        for (int x = 0; x < MAX_P_WIDTH; ++x) {
+
+            auto* p = CURRENT_PARTICLE;
+            bool moved = false;
+
+            if (p == nullptr || p->idle || p->updated) continue;
+
+            if (p->type == ParticleType::SAND) {
+
+                if (p->y + 1 >= MAX_P_HEIGHT) continue;
+
+                bool right = (p->x + 1 < MAX_P_WIDTH);
+                bool left  = (p->x - 1 >= 0);
+
+                if (!particles[(p->y + 1) * MAX_P_WIDTH + p->x]) {
+
+                    p->y++;
+                    p->updated = true;
+                    swapParticles((void**)&CURRENT_PARTICLE, (void**)&HOST_PARTICLE);
+
+                    moved = true;
+                }
+                else if (right && !particles[(p->y + 1) * MAX_P_WIDTH + p->x + 1]) {
+
+                    p->y++;
+                    p->x++;
+                    p->updated = true;
+                    swapParticles((void**)&CURRENT_PARTICLE, (void**)&HOST_PARTICLE);
+
+                    moved = true;
+                }
+                else if (left && !particles[(p->y + 1) * MAX_P_WIDTH + p->x - 1]) {
+
+                    p->y++;
+                    p->x--;
+                    p->updated = true;
+                    swapParticles((void**)&CURRENT_PARTICLE, (void**)&HOST_PARTICLE);
+
+                    moved = true;
+                }
+            }
+
+            if (!moved) {
+
+                p->idleCounter++;
+
+                if (p->idleCounter >= p->stablePoint) {
+                    p->idle;
+                    p->idleCounter = 0;
+                }
+            }
+        }
+    }
+}
+
+void swapParticles(void** p1, void** p2) {
+
+    void* t = *p1;
+
+    *p1 = *p2;
+    *p2 = t;
 }
 
 void calculateDeltaTime() {
@@ -391,9 +494,14 @@ void calculateDeltaTime() {
 
 glm::vec2 getMousePos(GLFWwindow* window) {
 
+    const bool reverse = false;
+
     double xPos, yPos;
     glfwGetCursorPos(window, &xPos, &yPos);
-    return { xPos, (SCREEN_HEIGHT - yPos) };
+    if (reverse)
+        return { xPos, (SCREEN_HEIGHT - yPos) };
+    else
+        return { xPos, yPos };
 }
 
 void initRenderer() {
