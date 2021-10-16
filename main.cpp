@@ -99,6 +99,7 @@ void updateParticles(std::array<Particle*, (SCREEN_WIDTH / 5) * (SCREEN_HEIGHT /
 
 void calculateFPS();
 void calculateDeltaTime();
+glm::vec3 convertHSVtoRGB(int h, float s, float v, bool normalized = false);
 glm::vec2 getMousePos(GLFWwindow* window);
 
 void initRenderer();
@@ -180,6 +181,8 @@ int main() {
     for (auto* p : particles)
         p = nullptr;
 
+	convertHSVtoRGB(143, 0.67, 0.89);
+
     while (!glfwWindowShouldClose(window)) {
 
         // Calculate FPS
@@ -198,6 +201,7 @@ int main() {
             // Update Particles
             updateParticles(particles);
         }
+
         // Calculate delta time;
         calculateDeltaTime();
 
@@ -253,7 +257,7 @@ int main() {
         ss.str(std::string());
         ss << rd.quadCount;
         std::string quadCount = "Quad Count : " + ss.str();
-        ImGui::Begin("ImGui Window");
+        ImGui::Begin("Performance");
         ImGui::Text("%s", drawCalls.c_str());
         ImGui::Text("%s", quadCount.c_str());
         ImGui::Text("%s", std::string("FPS : " + fps).c_str());
@@ -408,8 +412,10 @@ void placeParticle(std::array<Particle*, (SCREEN_WIDTH / 5) * (SCREEN_HEIGHT / 5
         return;
 
     if (type == ParticleType::SAND) {
-        particles[y * (SCREEN_WIDTH / PIXEL_SIZE) + x] = new Particle(x, y, {0.5f, 0.5f, 0.0f, 1.0f}, type);
-        particles[y * (SCREEN_WIDTH / PIXEL_SIZE) + x]->stablePoint = 5;
+
+		glm::vec3 pColor = convertHSVtoRGB(45, 0.351, 0.631 + ((rand() % 25 + 1) / 100.0f), true);
+        particles[y * (SCREEN_WIDTH / PIXEL_SIZE) + x] = new Particle(x, y, {pColor.r, pColor.g, pColor.b, 1.0f}, type);
+        particles[y * (SCREEN_WIDTH / PIXEL_SIZE) + x]->stablePoint = 25;
     }
 }
 
@@ -467,7 +473,7 @@ void updateParticles(std::array<Particle*, (SCREEN_WIDTH / 5) * (SCREEN_HEIGHT /
                 p->idleCounter++;
 
                 if (p->idleCounter >= p->stablePoint) {
-                    p->idle;
+                    p->idle = true;
                     p->idleCounter = 0;
                 }
             }
@@ -490,6 +496,55 @@ void calculateDeltaTime() {
     if (deltaTime > deltaTimeHigh)
         deltaTime = deltaTimeHigh;
     lastFrameTime = crntFrameTime;
+}
+
+glm::vec3 convertHSVtoRGB(int h, float s, float v, bool normalized) {
+
+	float c = s * v;
+	float x = c * (1 - fabs((fmod((h / 60.0), 2.0)) - 1));
+	float m = v - c;
+
+	float r_, g_, b_;
+	
+	if      (0 <= h && h < 60) {
+		r_ = c;
+		g_ = x;
+		b_ = 0;	
+	}
+	else if (60 <= h && h < 120) {
+		r_ = x;
+		g_ = c;
+		b_ = 0;
+	}
+	else if (120 <= h && h < 180) {
+		r_ = 0;
+		g_ = c;
+		b_ = x;
+	}
+	else if (180 <= h && h < 240) {
+		r_ = 0;
+		g_ = x;
+		b_ = c;
+	}
+	else if (240 <= h && h < 300) {
+		r_ = x;
+		g_ = 0;
+		b_ = c;
+	}
+	else if (300 <= h && h < 360) {
+		r_ = c;
+		g_ = 0;
+		b_ = x;
+	}
+
+	int r = round((r_ + m) * 255);
+	int g = round((g_ + m) * 255);
+	int b = round((b_ + m) * 255);
+
+	if (!normalized)
+		return {r, g, b};
+
+	return {r / 255.0f, g / 255.0f, b / 255.0f};
 }
 
 glm::vec2 getMousePos(GLFWwindow* window) {
